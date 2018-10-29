@@ -1,0 +1,180 @@
+---
+title: "Biogenic Habitat Suitability in East Boston"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(kableExtra)
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE)
+```
+```{r libraries}
+library(tidyverse)
+library(raster)
+library(rgdal)
+library(rgeos)
+
+
+```
+
+```{r east_boston, results='hide', message=FALSE}
+
+#bring in a coastline
+coastline <- readOGR("../raw_data/Massachusetts Municipal Boundaries Lines/GISDATA_TOWNSSURVEY_ARC.shp", layer="GISDATA_TOWNSSURVEY_ARC") 
+
+
+#make a new raster
+eb <- raster(nrows=180, ncols=10,
+             crs = "+proj=longlat +ellps=WGS84 +datum=WGS84 +no_defs",
+             ext = extent(-71.072987, -70.971441, 42.339312, 42.403786))
+eb_extent <- projectExtent(eb, crs = crs(coastline))
+
+east_bos <- raster::crop(coastline,  extent(eb_extent))
+
+#saveRDS(east_bos, file="../derived_data/east_bos_shoreline.Rds")
+```
+
+```{r load_info}
+
+sediments <- raster("../derived_data/sediments.grd") %>%
+  crop(extent(eb_extent))
+
+slr_sediments_predict <- raster("../derived_data/slr_current_predicted.grd") %>%
+  crop(extent(eb_extent))
+
+slr_idtab <- levels(slr_sediments_predict)[[1]] %>%
+  mutate(levels = as.character(levels))
+
+current_velocity <- raster("../derived_data/SWAN/current_velocity_crop_ag.grd") %>%
+  crop(extent(eb_extent))
+
+depths <- raster("../derived_data/SWAN/depth_rast_crop_ag.grd") %>%
+  crop(extent(eb_extent))
+
+#load drivers
+drivers <- read_csv("../derived_data/drivers_minmax.csv")
+
+#load substrate requirements
+substrates <- read_csv("../derived_data/substrates.csv") %>%
+  left_join(slr_idtab, by = c("Substrate Type" = "levels")) %>%
+  filter(!is.na(ID))
+
+```
+
+## Introduction
+
+To determine where different major habitat forming species can occur around East Boston, we combined a variety of data layers from MORIS and SWAN model outputs with information on substrate, flow, and depth requirements of different habitat types.
+
+```{r, fig.cap="<b>Predicted Flow Velocities</b>"}
+library(ggplot2)
+library(broom)
+ggplot(as.data.frame(current_velocity, xy=TRUE) %>% filter(!is.na(band1)),
+       mapping=aes(x=x, y=y)) +
+  geom_raster(mapping=aes(fill=band1)) +
+  scale_fill_continuous(low="blue", high="red", 
+                        guide=guide_colorbar(title="Peak Flow\nm/s")) +
+  geom_path(data = east_bos %>% tidy, mapping=aes(x=long, y = lat, group=group)) +
+  theme_void()
+```
+
+Flow and Depth were provided by SWAN model outputs at peak flood tide. Substrate was generated from modeled outputs from the Boston Harbor Barrier project. Briefly, we used current flow, depth, distance from harbor mouth, and distance from shore conditions to classify habitat types provided by MORIS using a random forest model. This resulted in a ~94% classification accuracy. We then applied SWAN model outputs to the model to predict future substrate types.
+
+
+```{r, fig.cap="<b>Predicted Sediment Types</b>"}
+library(ggplot2)
+library(broom)
+ggplot(as.data.frame(slr_sediments_predict, xy=TRUE) %>% filter(!is.na(predicted_levels)),
+       mapping=aes(x=x, y=y)) +
+  geom_raster(mapping=aes(fill=predicted_levels)) +
+  scale_fill_manual(values = colorRampPalette(RColorBrewer::brewer.pal(8, "Accent"))(16),
+                    guide = guide_legend("Sediment Type")) +
+  geom_path(data = east_bos %>% tidy, mapping=aes(x=long, y = lat, group=group)) +
+  theme_void()
+```
+
+For our drivers, we sill lack completeness for some species, but, what we have provides good coverage for many species. We still lack a good temperature layer under future conditions, which we need to finish the predictions, but we have a lead on that.
+
+Note, this list also lacks salinity and light/sedimentation. We have that information, but so far model outputs don't give us relevant information. **This is something to discuss**.
+
+```{r drivers}
+drivers %>%
+  rename(`Max or Min` = `Max, Min, or Mean`) %>%
+  kable("html") %>%
+  kable_styling
+
+```{r make_habs}
+
+make_habitat_by_substrate <- function(adf, seds = slr_sediments_predict){
+  hab <- slr_sediments_predict %in% adf$ID 
+  values(hab)[values(hab==0)] <- NA
+  hab
+}
+
+hab_rasts <- substrates %>%
+  split(.$`Biogenic Habitat/Species`) %>%
+  map(make_habitat_by_substrate)
+#   
+# par(mfrow=c(2,2))
+# lapply(hab_rasts, function(x) {plot(x); plot(east_bos, add=T)})
+# par(mfrow=c(1,1))
+
+# flow velocity - does the peak exceed max or is it below min
+le <- function(a,b) a <= b
+ge <- function(a,b) a >= b
+
+make_habitat_by_driver <- function(adf, add_depth=5){
+  if(adf$`Limiting Driver`[1]=="Flow Velocity"){
+    rast <- current_velocity
+  }else{
+    rast <- depths + add_depth
+  }
+  
+  comp_fun <- ifelse(adf$`Max, Min, or Mean`=="Max", le, ge)
+  
+  ret <- comp_fun(rast, adf$Value[1])
+  values(ret)[values(ret==0)] <- NA
+  
+  ret
+}
+
+
+driver_maps <- drivers %>%
+  filter(`Limiting Driver` != "Temperature") %>%
+  split(list(.$`Biogenic Habitat/Species`, 
+             .$`Limiting Driver`, 
+             .$`Max, Min, or Mean`), drop=TRUE) %>%
+  map(make_habitat_by_driver)
+# 
+# par(mfrow=c(3,3))
+# lapply(driver_maps, plot)
+# par(mfrow=c(1,1))
+
+#output map for each species/hab type
+make_summed_rast <- function(a_sp){
+  hab <- hab_rasts[[a_sp]]
+  idx <- grep(a_sp, names(driver_maps))
+  all_stack <- stack(hab, driver_maps[idx])
+  if(length(idx)==1){all_stack <- stack(hab, driver_maps[[idx]])} #ugh, lists
+
+  calc(all_stack, sum)
+  
+}
+
+all_tolerance <- map(names(hab_rasts), make_summed_rast)
+names(all_tolerance) <- names(hab_rasts)
+```
+
+For Clams, Mussel Beds, Oysters, and Seagrasses, we can put together a potential suitable habitat map noting which of these parameters as well as sediment requirements is matched in the modeled rasters.
+
+```{r, results="hide"}
+make_suitability_map <- function(idx){
+  ggplot(as.data.frame(all_tolerance[[idx]], xy=TRUE) %>% filter(!is.na(layer)), 
+       aes(x=x, y=y)) +
+  geom_raster(fill="green") +
+  geom_path(data = east_bos %>% tidy, mapping=aes(x=long, y = lat, group=group)) +
+  theme_void() +
+  ggtitle(names(all_tolerance)[idx])
+}  
+
+lapply(1:4, make_suitability_map)
+```

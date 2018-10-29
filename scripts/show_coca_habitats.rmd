@@ -1,0 +1,19 @@
+---
+title: "COCA Habitat Predictions"
+author: "Jarrett Byrnes"
+date: "10/24/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(ggmap)
+
+```
+
+## Whadda we got?
+
+```{r, warning=FALSE}
+readRDS("../plots_data_for_report/map_ggplots.Rds")
+```

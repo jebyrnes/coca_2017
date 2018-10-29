@@ -1,0 +1,118 @@
+---
+title: "Biogenic Habitat Suitability in East Boston"
+output:
+     html_document: default
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(kableExtra)
+knitr::opts_chunk$set(echo = FALSE, warning=FALSE, message=FALSE, knitr.table.format = "html")
+```
+```{r libraries, warning=FALSE}
+library(dplyr)
+library(tidyr)
+library(purrr)
+library(raster)
+
+library(ggplot2)
+library(ggmap)
+library(broom)
+
+theme_set(theme_void(base_size = 14) + theme(axis.title = element_blank()))
+```
+
+```{r load_geospatial, results='hide', message=FALSE}
+#geo_tibble_full <- readRDS("../plots_data_for_report/geo_tibble_fill.Rds")
+change_tibble <- readRDS("../plots_data_for_report/change_tibble.Rds")
+map_ggplots <- readRDS("../plots_data_for_report/map_ggplots.Rds")
+
+#layers
+flow_ggplots <- readRDS( "../plots_data_for_report/flow_ggplots.Rds")
+depth_ggplots <- readRDS("../plots_data_for_report/depth_ggplots.Rds")
+sediments_ggplots <- readRDS("../plots_data_for_report/sediments_ggplots.Rds")
+```
+
+Boston harbor is host to a wide variety of critically important habitat forming species. From clams to oysters to seagrasses, these species act as a foundation for entire food webs. Changing the relative suitability for these habitat types could have unintended consequences for environmental quality and the health of the nearshore ecosystem. To determine how green versus grey adaptation stretegies could influence the biological environment of East Boston, we compared modeled outputs of how these adaptations would change the physical environment now, in 2030, and 2070 to tolerances of clams, oysters, and seagrasses.
+
+To build our models of the physical environment, we began with modeled depths and flow conditions from SWAN model outputs of present conditions. We then incorporated modeled outputs from this report about changes in flow velocity and depth under all different conditions. We determined dominant sediment types under all conditions by taking predicted sediment types from a random forest model fit to the current available Massachusetts Ocean Resource Information System (MORIS) information on sediment types within the harbor. The model used current SWAN modeled flow velocity, depth, distance from mouth of Boston Harbor, and distance to shoreline as inputs. The model achieved a 90% classification accuracy. Due to the lack of depth data close to the Suffolk Downs adaptation, we present only the results for Constitution Beach and the East Boston Greenway.
+
+## Constitution Beach
+At Constitution, filter feeders benefit most from adaptations, although green provides a higher benefit than grey infrastructure. Changes in Sea Level also negate some gaints. Both green and grey infrastructure increases flow rates, with increases higher for green adaptation (Fig X1). There is less of a clear difference in terms of depth, which is overwhelmed by sea level rise regardless (Figure X1.)
+
+```{r flow_c, fig.cap = "Figure X1. Flow rates (m/s) under different adaptation plans at different time points around Constitution Beach."}
+flow_ggplots$`Constitution Beach` 
+```
+
+```{r depth_c, fig.cap = "Figure X2. Depth (ft) under different adaptation plans at different time points around Constitution Beach."}
+depth_ggplots$`Constitution Beach` 
+```
+
+This change in flow primarily influences differences in sediment types. Adaptation plans tend to promote more rocky and sand that without. However, the fraction of mud increases under all scenarios as sea level rise increases (Figure X3).
+
+```{r sed_c, fig.cap = "Figure X3. Distribution of predicted sediment types under different adaptation plans at different time points around Constitution Beach."}
+sediments_ggplots$`Constitution Beach` 
+```
+
+Putting these trends together, increases in flow rates under green infrastructure should increase areas available to filter feeders (Figure X5, Table Y1). Similarly, increases in mud over time should be beneficial to clams and oysters, while adaptation stretegies that increase rock and other hard substrate at the edges provide additional mussel habitat. In the above scenarios, there is little shallow sandy or cobbly areas, suggesting little available habitat in this area for seagrass, regardless. Taken together, current green adaptation strategies around Constitution Beach could increase available habitat for biogenic habitat forming filter feeders. Over time, these benefits are either maintained or eroded due to sea level rise.
+
+
+```{r hab_c, fig.cap = "Figure X4. Distribution of areas suitable for major habitat forming species under different adaptation plans at different time points around Constitution Beach."}
+n <- names(map_ggplots)[grep("Beach", names(map_ggplots))]
+walk(n, ~map_ggplots[[.x]] %>% print) 
+```
+
+```{r values, fig.cap = "Table Y1. Difference in area (square kilometers) of suitable areas for major habitat forming species under different adaptation plans at different time points around Constitution Beach.", results = "asis"}
+niceprint <- function(x){
+
+  out <- x %>% 
+    dplyr::select(-Species) %>%
+    kable(digits = 3) 
+  
+  paste0(paste0("  \n<br><br>\n", x$Species[1], "\n"), out)
+  
+  
+}
+
+change_tibble %>%
+  filter(Location=="Constitution Beach") %>%
+  dplyr::select(-Location) %>%
+  split(.$Species) %>%
+  map_chr(~niceprint(.x)) %>% cat
+```
+
+## East Boston Greenway
+
+The East Boston Greenway presents a contrasting story. Due to the deep channel neaby, different adaptation strategies have little impact on the overall physical environment, while Sea Level Rise does have some impact on the distribution of sediment types (Figures X5-X7). This translates to a relative statis and little difference between available habitat for all filter feeders, and a loss of seagrass habitat over time as water depths increase (Figure X8, Table Y2).
+
+```{r flow_ebg, fig.cap = "Figure X5. Flow rates (m/s) under different adaptation plans at different time points around the East Boston Greenway."}
+flow_ggplots$`East Boston Greenway` 
+```
+
+```{r depth_ebg, fig.cap = "Figure X6. Depth (ft) under different adaptation plans at different time points around the East Boston Greenway."}
+depth_ggplots$`East Boston Greenway` 
+```
+
+```{r sed_ebg, fig.cap = "Figure X7. Distribution of predicted sediment types under different adaptation plans at different time points around the East Boston Greenway."}
+sediments_ggplots$`East Boston Greenway` 
+```
+
+
+```{r hab_ebg, fig.cap = "Figure X8. Distribution of areas suitable for major habitat forming species under different adaptation plans at different time points around the East Boston Greenway"}
+n <- names(map_ggplots)[grep("Boston", names(map_ggplots))]
+walk(n, ~map_ggplots[[.x]] %>% print) 
+```
+
+```{r valuesebg, fig.cap = "Table Y2. Difference in area (square kilometers) of suitable areas for major habitat forming species under different adaptation plans at different time points around the East Boston Greenway.", results = "asis"}
+
+
+change_tibble %>%
+  filter(Location=="East Boston Greenway") %>%
+  dplyr::select(-Location) %>%
+  split(.$Species) %>%
+  map_chr(~niceprint(.x)) %>% cat
+```
+
+## Caveats
+
+These analyses solely consider flow and depth characteristics of the affected areas. Each of these species can likewise be impacted by changes in water temperature over time which could greatly lower available habitats across the board. Similarly, our modeled results do not account for water clarity due to the complexity of fine-scale modeling of turbidity. Changes in turbidity and clarity could likewise have a large impact on each of these biogenic habitats.
